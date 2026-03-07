@@ -5,7 +5,6 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import {
-    Show,
     SignInButton,
     UserButton,
     useUser
@@ -62,19 +61,17 @@ const Navbar = () => {
                     })}
 
                     {/* Signed Out */}
-                    <Show when="signed-out">
+                    {!user && (
                         <SignInButton mode="modal">
                             <button className="px-4 py-2 rounded-lg bg-black text-white hover:bg-black/90 transition-all font-medium">
                                 Sign In
                             </button>
                         </SignInButton>
-                    </Show>
+                    )}
 
                     {/* Signed In */}
-                    <Show when="signed-in">
-
+                    {user && (
                         <div className="flex gap-3 items-center">
-
                             <div className="nav-user-link">
                                 <UserButton />
                             </div>
@@ -87,10 +84,8 @@ const Navbar = () => {
                                     {user.firstName}
                                 </Link>
                             )}
-
                         </div>
-
-                    </Show>
+                    )}
 
                 </nav>
 
