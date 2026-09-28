@@ -1,49 +1,54 @@
-import { Document, Types } from 'mongoose';
 import { ReactNode } from 'react';
 import { Control, FieldPath, FieldValues } from 'react-hook-form';
 import { LucideIcon } from 'lucide-react';
 import z from 'zod';
-import { UploadSchema } from '@/lib/zod';
-import { PLANS, PlanType } from "@/lib/subscription-constants";
+import { PlanType } from "@/lib/subscription-constants";
 
 // ============================================
-// DATABASE MODELS
+// DATABASE MODELS / ENTITIES
 // ============================================
 
-export interface IBook extends Document {
-    _id: string;
-    clerkId: string;
+export interface IBook {
+    id: string;
+    _id?: string;
+    userId?: string;
+    clerkId?: string;
     title: string;
     slug: string;
     author: string;
-    persona?: string;
+    persona?: string | null;
     fileURL: string;
     fileBlobKey: string;
-    coverURL?: string;
-    coverBlobKey?: string;
+    coverURL?: string | null;
+    coverBlobKey?: string | null;
     fileSize: number;
     totalSegments: number;
     createdAt: Date;
     updatedAt: Date;
 }
 
-export interface IBookSegment extends Document {
-    clerkId: string;
-    bookId: Types.ObjectId;
+export interface IBookSegment {
+    id: string;
+    _id?: string;
+    userId?: string;
+    clerkId?: string;
+    bookId: string;
     content: string;
     segmentIndex: number;
-    pageNumber?: number;
+    pageNumber?: number | null;
     wordCount: number;
     createdAt: Date;
     updatedAt: Date;
 }
 
-export interface IVoiceSession extends Document {
-    _id: string;
-    clerkId: string;
-    bookId: Types.ObjectId;
+export interface IVoiceSession {
+    id: string;
+    _id?: string;
+    userId?: string;
+    clerkId?: string;
+    bookId: string;
     startedAt: Date;
-    endedAt?: Date;
+    endedAt?: Date | null;
     durationSeconds: number;
     billingPeriodStart: Date;
     createdAt: Date;
@@ -54,10 +59,18 @@ export interface IVoiceSession extends Document {
 // FORM & INPUT TYPES
 // ============================================
 
+export const UploadSchema = z.object({
+    pdfFile: z.any(),
+    coverImage: z.any().optional(),
+    title: z.string().min(1),
+    authorName: z.string().min(1),
+    voice: z.string().min(1),
+});
+
 export type BookUploadFormValues = z.infer<typeof UploadSchema>;
 
 export interface CreateBook {
-    clerkId: string;
+    clerkId?: string;
     title: string;
     slug: string;
     author: string;

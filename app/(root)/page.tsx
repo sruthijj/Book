@@ -5,7 +5,7 @@ import BookCard from "@/components/BookCard";
 
 const Page = () => {
   return (
-    <main>
+    <main className="pt-20 sm:pt-24 pb-16 min-h-screen">
       <HeroSection />
 
       <div className="library-hero-grid">

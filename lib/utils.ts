@@ -121,10 +121,11 @@ export async function parsePDFFile(file: File) {
       throw new Error('Could not get canvas context');
     }
 
-    await firstPage.render({
+    await (firstPage.render({
       canvasContext: context,
       viewport: viewport,
-    }).promise;
+      canvas: canvas,
+    } as any)).promise;
 
     // Convert canvas to data URL
     const coverDataURL = canvas.toDataURL('image/png');
@@ -136,8 +137,8 @@ export async function parsePDFFile(file: File) {
       const page = await pdfDocument.getPage(pageNum);
       const textContent = await page.getTextContent();
       const pageText = textContent.items
-          .filter((item) => 'str' in item)
-          .map((item) => (item as { str: string }).str)
+          .filter((item: any) => 'str' in item)
+          .map((item: any) => item.str)
           .join(' ');
       fullText += pageText + '\n';
     }
@@ -146,7 +147,11 @@ export async function parsePDFFile(file: File) {
     const segments = splitIntoSegments(fullText);
 
     // Clean up PDF document resources
-    await pdfDocument.destroy();
+    if (typeof (pdfDocument as any).destroy === 'function') {
+      await (pdfDocument as any).destroy();
+    } else if (typeof (pdfDocument as any).cleanup === 'function') {
+      await (pdfDocument as any).cleanup();
+    }
 
     return {
       content: segments,
