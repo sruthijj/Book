@@ -1,15 +1,18 @@
 import React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import DeleteBookButton from '@/components/DeleteBookButton'
 
 interface BookCardProps {
+    id?: string;
     title: string;
     author: string;
     coverURL: string;
     slug: string;
+    isCustomBook?: boolean;
 }
 
-const BookCard = ({ title, author, coverURL, slug }: BookCardProps) => {
+const BookCard = ({ id, title, author, coverURL, slug, isCustomBook }: BookCardProps) => {
     return (
         <Link
             href={`/book/${slug}`}
@@ -34,6 +37,18 @@ const BookCard = ({ title, author, coverURL, slug }: BookCardProps) => {
                     {author}
                 </p>
             </div>
+
+            {/* Delete button for custom uploaded books */}
+            {id && isCustomBook && (
+                <div className="absolute top-6 left-6 z-10 opacity-80 hover:opacity-100 transition-opacity">
+                    <DeleteBookButton
+                        bookId={id}
+                        bookTitle={title}
+                        variant="icon"
+                        redirectToHome={false}
+                    />
+                </div>
+            )}
 
             <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-x-2 group-hover:translate-x-0">
                 <div className="bg-[#212a3b] text-white p-2 rounded-full shadow-lg">

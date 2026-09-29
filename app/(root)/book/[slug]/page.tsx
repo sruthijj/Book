@@ -1,11 +1,12 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowLeft, Layers, Volume2 } from 'lucide-react';
-import { getBookBySlug } from '@/lib/actions/book.actions';
+import { ArrowLeft, Layers, Volume2, BookOpen } from 'lucide-react';
+import { getBookBySlug, getBookSegments } from '@/lib/actions/book.actions';
 import { getVoice } from '@/lib/utils';
-import BookChat from '@/components/BookChat';
 import VoiceCallButton from '@/components/VoiceCallButton';
+import DeleteBookButton from '@/components/DeleteBookButton';
+import BookTabsContainer from '@/components/BookTabsContainer';
 
 interface PageProps {
   params: Promise<{
@@ -36,6 +37,10 @@ export default async function BookDetailsPage({ params }: PageProps) {
 
   const book = res.data;
   const voice = getVoice(book.persona || undefined);
+
+  // Pre-fetch all indexed PDF text segments / pages from Neon
+  const segmentsRes = await getBookSegments(book.id);
+  const segments = segmentsRes.success && segmentsRes.data ? segmentsRes.data : [];
 
   return (
     <main className="min-h-screen pt-24 sm:pt-28 pb-20 wrapper">
@@ -100,9 +105,9 @@ export default async function BookDetailsPage({ params }: PageProps) {
                 <div className="p-3 rounded-2xl bg-[#FFF9ED] border border-[#E9E1CC] flex items-center gap-2.5">
                   <Layers className="w-4 h-4 text-[#663820] flex-shrink-0" />
                   <div className="flex flex-col min-w-0">
-                    <span className="text-[10px] text-[#A89F8F] uppercase font-bold tracking-wider">Segments</span>
+                    <span className="text-[10px] text-[#A89F8F] uppercase font-bold tracking-wider">Pages</span>
                     <span className="text-xs font-semibold text-[#1C1C1C] truncate">
-                      {book.totalSegments || 0} Indexed
+                      {segments.length || book.totalSegments || 0} Pages
                     </span>
                   </div>
                 </div>
@@ -121,18 +126,38 @@ export default async function BookDetailsPage({ params }: PageProps) {
                 author={book.author}
                 persona={book.persona || undefined}
               />
+
+              {/* Direct Link to Read Book Pages */}
+              <a
+                href="#reader-view"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-[#FFF9ED] border border-[#E9E1CC] text-[#663820] hover:bg-[#F5F0E1] font-semibold text-xs sm:text-sm transition-all shadow-xs"
+              >
+                <BookOpen className="w-4 h-4 text-[#663820]" />
+                <span>Read Book Pages ({segments.length} Pages)</span>
+              </a>
+
+              {/* Delete Book Button */}
+              <div className="pt-2 border-t border-[#E9E1CC]/60">
+                <DeleteBookButton
+                  bookId={book.id}
+                  bookTitle={book.title}
+                  redirectToHome={true}
+                />
+              </div>
             </div>
 
           </div>
         </div>
 
-        {/* Right Column: Contextual RAG Chat */}
+        {/* Right Column: AI Conversation & PDF Content Reader */}
         <div className="lg:col-span-7">
-          <BookChat
+          <BookTabsContainer
             bookId={book.id}
             bookTitle={book.title}
             author={book.author}
             persona={book.persona || undefined}
+            initialSegments={segments}
+            defaultTab="reader"
           />
         </div>
 

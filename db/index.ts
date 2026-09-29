@@ -1,30 +1,23 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Pool, neonConfig } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-serverless";
 import * as schema from "./schema";
 
 const connectionString =
   process.env.DATABASE_URL ||
-  "postgresql://postgres:postgres@localhost:5432/bookified";
+  "postgresql://neondb_owner:npg_iZuB6a9YsqvT@ep-wild-mud-b4smrt0q-pooler.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
 
 declare global {
-  var _pgPool: Pool | undefined;
+  var _neonPool: Pool | undefined;
 }
 
 const pool =
-  global._pgPool ||
+  global._neonPool ||
   new Pool({
     connectionString,
-    ssl:
-      process.env.NODE_ENV === "production" ||
-      connectionString.includes("sslmode=require") ||
-      connectionString.includes("neon.tech") ||
-      connectionString.includes("supabase.co")
-        ? { rejectUnauthorized: false }
-        : false,
   });
 
 if (process.env.NODE_ENV !== "production") {
-  global._pgPool = pool;
+  global._neonPool = pool;
 }
 
 export const db = drizzle(pool, { schema });

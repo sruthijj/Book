@@ -132,8 +132,10 @@ export async function parsePDFFile(file: File) {
     // Convert canvas to lightweight compressed JPEG data URL
     const coverDataURL = canvas.toDataURL('image/jpeg', 0.75);
 
-    // Extract text from all pages
+    // Extract text from all pages preserving page numbers
     let fullText = '';
+    const segments: Array<{ text: string; segmentIndex: number; pageNumber: number; wordCount: number }> = [];
+    let segmentIndex = 0;
 
     for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
       const page = await pdfDocument.getPage(pageNum);
@@ -141,12 +143,23 @@ export async function parsePDFFile(file: File) {
       const pageText = textContent.items
           .filter((item: any) => 'str' in item)
           .map((item: any) => item.str)
-          .join(' ');
-      fullText += pageText + '\n';
+          .join(' ')
+          .trim();
+
+      if (pageText) {
+        fullText += pageText + '\n\n';
+        const words = pageText.split(/\s+/).filter(Boolean);
+        segments.push({
+          text: pageText,
+          segmentIndex: segmentIndex++,
+          pageNumber: pageNum,
+          wordCount: words.length,
+        });
+      }
     }
 
-    // Split text into segments for search
-    const segments = splitIntoSegments(fullText);
+    // Fall back to splitIntoSegments if page extraction was empty
+    const finalSegments = segments.length > 0 ? segments : splitIntoSegments(fullText);
 
     // Clean up PDF document resources
     if (typeof (pdfDocument as any).destroy === 'function') {
@@ -156,8 +169,9 @@ export async function parsePDFFile(file: File) {
     }
 
     return {
-      content: segments,
+      content: finalSegments,
       cover: coverDataURL,
+      numPages: pdfDocument.numPages,
     };
   } catch (error) {
     console.error('Error parsing PDF:', error);

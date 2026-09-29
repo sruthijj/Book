@@ -92,40 +92,43 @@ const Navbar = () => {
                     })}
 
                     {/* Auth Status (Desktop) */}
-                    {!loading && (
-                        <div className="flex items-center gap-3 pl-2 border-l border-[#E9E1CC]">
-                            {user ? (
-                                <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F5F0E1] border border-[#E9E1CC] text-xs font-semibold text-[#1C1C1C] max-w-[180px]">
-                                        <UserIcon className="w-3.5 h-3.5 text-[#663820] flex-shrink-0" />
-                                        <span className="truncate">{user.name}</span>
-                                    </div>
-                                    <button
-                                        onClick={handleSignOut}
-                                        title="Sign Out"
-                                        className="p-2 rounded-xl text-[#6B6B6B] hover:text-[#1C1C1C] hover:bg-[#F5F0E1] transition-colors"
-                                    >
-                                        <LogOut className="w-4 h-4" />
-                                    </button>
+                    <div className="flex items-center gap-3 pl-2 border-l border-[#E9E1CC] min-h-[40px]">
+                        {loading ? (
+                            <div className="flex items-center gap-2">
+                                <div className="w-16 h-8 rounded-lg bg-[#E9E1CC]/40 animate-pulse" />
+                                <div className="w-20 h-8 rounded-xl bg-[#663820]/20 animate-pulse" />
+                            </div>
+                        ) : user ? (
+                            <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F5F0E1] border border-[#E9E1CC] text-xs font-semibold text-[#1C1C1C] max-w-[180px]">
+                                    <UserIcon className="w-3.5 h-3.5 text-[#663820] flex-shrink-0" />
+                                    <span className="truncate">{user.name}</span>
                                 </div>
-                            ) : (
-                                <div className="flex items-center gap-2">
-                                    <Link
-                                        href="/sign-in"
-                                        className="px-3.5 py-1.5 text-sm font-semibold text-[#1C1C1C] hover:text-[#663820] transition-colors"
-                                    >
-                                        Sign In
-                                    </Link>
-                                    <Link
-                                        href="/sign-up"
-                                        className="px-4 py-2 rounded-xl bg-[#663820] hover:bg-[#4d2814] text-white text-sm font-semibold transition-all shadow-xs"
-                                    >
-                                        Sign Up
-                                    </Link>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                                <button
+                                    onClick={handleSignOut}
+                                    title="Sign Out"
+                                    className="p-2 rounded-xl text-[#6B6B6B] hover:text-[#1C1C1C] hover:bg-[#F5F0E1] transition-colors cursor-pointer"
+                                >
+                                    <LogOut className="w-4 h-4" />
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <Link
+                                    href="/sign-in"
+                                    className="px-3.5 py-1.5 text-sm font-semibold text-[#1C1C1C] hover:text-[#663820] transition-colors"
+                                >
+                                    Sign In
+                                </Link>
+                                <Link
+                                    href="/sign-up"
+                                    className="px-4 py-2 rounded-xl bg-[#663820] hover:bg-[#4d2814] text-white text-sm font-semibold transition-all shadow-xs"
+                                >
+                                    Sign Up
+                                </Link>
+                            </div>
+                        )}
+                    </div>
                 </nav>
 
                 {/* Mobile Menu Toggle Button */}
