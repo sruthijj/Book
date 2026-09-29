@@ -57,6 +57,7 @@ export default function VoiceCallModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSimulated, setIsSimulated] = useState(false);
+  const [userMicLevel, setUserMicLevel] = useState(0);
 
   // References
   const vapiRef = useRef<Vapi | null>(null);
@@ -161,6 +162,30 @@ export default function VoiceCallModal({
         return;
       }
 
+      // Clean up any lingering previous session
+      if (vapiRef.current) {
+        try {
+          vapiRef.current.stop();
+        } catch {
+          // ignore
+        }
+        vapiRef.current = null;
+      }
+
+      // 2.5 Pre-check microphone permission via permissions API without locking hardware
+      if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+        try {
+          const micPerm = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          if (micPerm.state === 'denied') {
+            setErrorMessage('Microphone access is blocked in your browser settings. Please click the lock or camera icon in your address bar to allow microphone access, then try again.');
+            setStatus('idle');
+            return;
+          }
+        } catch {
+          // Not supported on Safari / older browsers, ignore and let Vapi request directly
+        }
+      }
+
       // 3. Connect to live Vapi instance
       const vapi = new Vapi(publicKey);
       vapiRef.current = vapi;
@@ -193,11 +218,14 @@ export default function VoiceCallModal({
         setVolumeLevel(level);
       });
 
+      vapi.on('local-volume-level', (level: number) => {
+        setUserMicLevel(level);
+      });
+
       vapi.on('message', (message: any) => {
         if (message.type === 'transcript' && message.transcript) {
           const role: 'user' | 'assistant' = message.role === 'user' ? 'user' : 'assistant';
           setTranscripts((prev) => {
-            // Avoid duplicate lines if partial
             const last = prev[prev.length - 1];
             if (last && last.role === role && message.transcriptType === 'partial') {
               return [...prev.slice(0, -1), { ...last, text: message.transcript }];
@@ -210,9 +238,26 @@ export default function VoiceCallModal({
         }
       });
 
+      vapi.on('call-start-failed', (err: any) => {
+        console.error('Vapi Call Start Failed:', err);
+        const msg =
+          err?.error?.message ||
+          err?.message ||
+          (typeof err?.error === 'string' ? err.error : null) ||
+          'Failed to start voice call. Please check your microphone permissions.';
+        setErrorMessage(msg);
+        setStatus('idle');
+      });
+
       vapi.on('error', (err: any) => {
         console.error('Vapi WebRTC Error:', err);
-        setErrorMessage(err?.message || 'Voice connection encounterd an error');
+        const msg =
+          err?.error?.message ||
+          err?.message ||
+          (typeof err?.error === 'string' ? err.error : null) ||
+          (err?.type ? `Voice error (${err.type})` : 'Voice connection encountered an error');
+        setErrorMessage(msg);
+        setStatus('idle');
       });
 
       // 4. Start call with Vapi
