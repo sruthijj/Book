@@ -183,7 +183,7 @@ export const getBookBySlug = async (slug: string) => {
 
         return { success: false, error: 'Book not found' };
     } catch (e: any) {
-        console.error('Error fetching book by slug from Neon database:', e);
+        console.error('Error fetching book by slug from Neon database:', e?.message, e?.cause || '');
         return {
             success: false,
             error: e.message || 'Failed to fetch book details from database',
