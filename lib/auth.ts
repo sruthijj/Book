@@ -11,10 +11,13 @@ const COOKIE_NAME = "bookified_auth_token";
 
 export const NEON_AUTH_URL =
   process.env.NEON_AUTH_URL ||
+  process.env.NEXT_PUBLIC_NEON_AUTH_URL ||
+  process.env.NEXT_NEON_AUTH_URL ||
   "https://ep-wild-mud-b4smrt0q.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth";
 
 export const NEON_AUTH_JWKS_URL =
   process.env.NEON_AUTH_JWKS_URL ||
+  process.env.NEON_AUTH_JWKS_UR || // safeguard for typo in Vercel
   "https://ep-wild-mud-b4smrt0q.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth/.well-known/jwks.json";
 
 // Lazily initialize remote JWKS set for Neon Auth

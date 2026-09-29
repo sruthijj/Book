@@ -93,7 +93,11 @@ export const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
 // VAPI Configuration
-export const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || '4d2dfd20-b400-4da6-a176-bb21ba8f6a45';
+export const VAPI_PUBLIC_KEY =
+  process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY ||
+  process.env.NEXT_VAPI_KEY ||
+  process.env.VAPI_PUBLIC_KEY ||
+  '4d2dfd20-b400-4da6-a176-bb21ba8f6a45';
 export const ASSISTANT_ID = process.env.NEXT_PUBLIC_ASSISTANT_ID || '';
 
 // 11Labs Voice IDs - Optimized for conversational AI

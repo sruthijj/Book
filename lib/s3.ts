@@ -1,9 +1,15 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const endpoint = process.env.AWS_ENDPOINT_URL_S3;
-const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+const endpoint =
+  process.env.AWS_ENDPOINT_URL_S3 ||
+  "https://br-delicate-fog-b43acua1.storage.c-6.us-east-2.aws.neon.tech";
+const accessKeyId =
+  process.env.AWS_ACCESS_KEY_ID ||
+  "nak_live_2401f9f845d24971bd42dfd023808841";
+const secretAccessKey =
+  process.env.AWS_SECRET_ACCESS_KEY ||
+  "nsk_live_08cd55ee9a60f0f4126ece6be72e91042c4324462eca08bf0704153574c24c5a";
 const region = process.env.AWS_REGION || "us-east-2";
 export const S3_BUCKET = process.env.S3_BUCKET_NAME || "assets";
 
