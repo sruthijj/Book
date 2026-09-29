@@ -258,6 +258,15 @@ export const searchBookSegments = async (bookId: string, query: string, limit: n
     try {
         console.log(`Searching for: "${query}" in book ${bookId}`);
 
+        // If bookId is not a valid UUID (e.g. sample books with IDs '1', '2'), return empty list
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bookId);
+        if (!isUUID) {
+            return {
+                success: true,
+                data: [],
+            };
+        }
+
         // Try PostgreSQL full-text search with plainto_tsquery
         try {
             const ftsResults = await db

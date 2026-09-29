@@ -1,6 +1,7 @@
 'use server';
 
 import { searchBookSegments } from './book.actions';
+import { getVoice } from '@/lib/utils';
 
 export interface ChatMessage {
   id: string;
@@ -19,6 +20,7 @@ export interface AskAssistantParams {
   bookId: string;
   bookTitle: string;
   author: string;
+  persona?: string;
   question: string;
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
@@ -39,6 +41,7 @@ export async function askBookAssistant({
   bookId,
   bookTitle,
   author,
+  persona,
   question,
   history = [],
 }: AskAssistantParams): Promise<AskAssistantResponse> {
@@ -48,7 +51,13 @@ export async function askBookAssistant({
     }
 
     // 1. Retrieve relevant passages from the book (RAG)
-    let sources: any[] = [];
+    let sources: Array<{
+      id?: string;
+      content: string;
+      pageNumber?: number | null;
+      segmentIndex?: number;
+    }> = [];
+
     try {
       const searchRes = await searchBookSegments(bookId, question, 4);
       if (searchRes.success && Array.isArray(searchRes.data)) {
@@ -62,13 +71,15 @@ export async function askBookAssistant({
       ? sources.map((s, idx) => `[Excerpt ${idx + 1}${s.pageNumber ? ` - Page ${s.pageNumber}` : ''}]:\n${s.content}`).join('\n\n')
       : 'No specific excerpts found in database.';
 
-    // 2. Check for AI Providers
-    const geminiKey = process.env.GEMINI_API_KEY;
-    const openaiKey = process.env.OPENAI_API_KEY;
+    // 2. Persona context
+    const voice = persona ? getVoice(persona) : null;
+    const personaInstruction = voice
+      ? `Persona: You embody "${voice.name}" (${voice.description}). Adopt this speaking style, tone, and mannerisms naturally throughout the discussion.`
+      : '';
 
     const systemPrompt = `You are an insightful and engaging AI reading companion for the book "${bookTitle}" by ${author}.
-Your goal is to help the reader understand, analyze, and discuss the ideas in this book.
-
+Your goal is to help the reader understand, analyze, and discuss the ideas, chapters, and concepts in this book.
+${personaInstruction ? `\n${personaInstruction}\n` : ''}
 Book Excerpts Retrieved from Database:
 """
 ${contextText}
@@ -80,36 +91,75 @@ Guidelines:
 3. Be conversational, encouraging, and clear.
 4. Keep answers concise (2-3 paragraphs maximum) so it feels like a natural conversation.`;
 
+    // 3. Check for AI Providers
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+
     // ─── Option A: Google Gemini API ──────────────────────────────────────────
     if (geminiKey) {
       try {
+        // Prepare alternating history for Gemini
+        const formattedHistory: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }> = [];
+        let lastRole: string | null = null;
+        for (const msg of history.slice(-6)) {
+          const role = msg.role === 'user' ? 'user' : 'model';
+          if (role !== lastRole && msg.content.trim()) {
+            formattedHistory.push({ role, parts: [{ text: msg.content }] });
+            lastRole = role;
+          }
+        }
+
+        // If history ends with a user message, remove it so the final question maintains user turn
+        if (formattedHistory.length > 0 && formattedHistory[formattedHistory.length - 1].role === 'user') {
+          formattedHistory.pop();
+        }
+
         const contents = [
-          {
-            role: 'user',
-            parts: [{ text: systemPrompt }],
-          },
-          {
-            role: 'model',
-            parts: [{ text: `Understood! I am ready to discuss "${bookTitle}" with you.` }],
-          },
-          ...history.slice(-6).map((msg) => ({
-            role: msg.role === 'user' ? 'user' : 'model',
-            parts: [{ text: msg.content }],
-          })),
+          ...formattedHistory,
           {
             role: 'user',
             parts: [{ text: question }],
           },
         ];
 
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+        let response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${geminiKey}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents }),
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: systemPrompt }],
+              },
+              contents,
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 800,
+              },
+            }),
           }
         );
+
+        if (!response.ok) {
+          // Fallback to flash-lite if flash is busy or unavailable
+          response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                system_instruction: {
+                  parts: [{ text: systemPrompt }],
+                },
+                contents,
+                generationConfig: {
+                  temperature: 0.7,
+                  maxOutputTokens: 800,
+                },
+              }),
+            }
+          );
+        }
 
         if (response.ok) {
           const data = await response.json();
@@ -121,9 +171,12 @@ Guidelines:
               sources: sources.length > 0 ? sources : undefined,
             };
           }
+        } else {
+          const errText = await response.text();
+          console.error(`Gemini API error (Status ${response.status}):`, errText);
         }
       } catch (geminiErr) {
-        console.error('Gemini API error, falling back:', geminiErr);
+        console.error('Gemini API call failed, attempting fallback:', geminiErr);
       }
     }
 
@@ -160,9 +213,12 @@ Guidelines:
               sources: sources.length > 0 ? sources : undefined,
             };
           }
+        } else {
+          const errText = await response.text();
+          console.error(`OpenAI API error (Status ${response.status}):`, errText);
         }
       } catch (openaiErr) {
-        console.error('OpenAI API error, falling back:', openaiErr);
+        console.error('OpenAI API call failed, falling back:', openaiErr);
       }
     }
 
@@ -182,14 +238,15 @@ Guidelines:
     // Fallback for sample/unindexed books
     return {
       success: true,
-      answer: `I'm ready to discuss "${bookTitle}" by ${author}! To enable full AI answers grounded in this book, you can add your \`GEMINI_API_KEY\` or \`OPENAI_API_KEY\` in \`.env.local\`. When you upload your own book PDF, all text segments will be stored in PostgreSQL and used as direct context here.`,
+      answer: `I'm ready to discuss "${bookTitle}" by ${author}! To enable full AI answers grounded in this book, add your \`GEMINI_API_KEY\` (Google AI Studio) or \`OPENAI_API_KEY\` in \`.env.local\`. When you upload your own book PDF, all text segments will be stored in PostgreSQL and used as direct context here.`,
       sources: undefined,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : 'Failed to generate answer';
     console.error('Error asking assistant:', error);
     return {
       success: false,
-      error: error.message || 'Failed to generate answer',
+      error: errorMsg,
     };
   }
 }

@@ -92,8 +92,9 @@ export const ACCEPTED_PDF_TYPES = ['application/pdf'];
 export const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
-// Pre-configured VAPI assistant ID (hardcoded for this app)
-export const ASSISTANT_ID = process.env.NEXT_PUBLIC_ASSISTANT_ID!;
+// VAPI Configuration
+export const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || '';
+export const ASSISTANT_ID = process.env.NEXT_PUBLIC_ASSISTANT_ID || '';
 
 // 11Labs Voice IDs - Optimized for conversational AI
 // Voices selected for natural, engaging book conversations

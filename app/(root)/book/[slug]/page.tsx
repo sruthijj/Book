@@ -1,11 +1,11 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { notFound } from 'next/navigation';
-import { ArrowLeft, Mic, Layers, Calendar, Volume2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Layers, Volume2 } from 'lucide-react';
 import { getBookBySlug } from '@/lib/actions/book.actions';
 import { getVoice } from '@/lib/utils';
 import BookChat from '@/components/BookChat';
+import VoiceCallButton from '@/components/VoiceCallButton';
 
 interface PageProps {
   params: Promise<{
@@ -113,14 +113,13 @@ export default async function BookDetailsPage({ params }: PageProps) {
                 {voice.description}
               </div>
 
-              {/* Voice Call Action Button (Preparation for Step 3 Voice Agent) */}
-              <button
-                className="w-full h-14 rounded-2xl bg-[#663820] hover:bg-[#4d2814] text-white font-serif font-bold text-base shadow-sm transition-all flex items-center justify-center gap-3 group mt-2"
-                onClick={undefined}
-              >
-                <Mic className="w-5 h-5 transition-transform group-hover:scale-110" />
-                <span>Start Voice Conversation</span>
-              </button>
+              {/* Voice Call Action Button (Vapi Voice Agent) */}
+              <VoiceCallButton
+                bookId={book.id}
+                bookTitle={book.title}
+                author={book.author}
+                persona={book.persona || undefined}
+              />
             </div>
 
           </div>

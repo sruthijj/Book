@@ -18,7 +18,7 @@ const suggestedPrompts = [
   "Explain the key concept in simple terms.",
 ];
 
-export default function BookChat({ bookId, bookTitle, author }: BookChatProps) {
+export default function BookChat({ bookId, bookTitle, author, persona }: BookChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -64,6 +64,7 @@ export default function BookChat({ bookId, bookTitle, author }: BookChatProps) {
         bookId,
         bookTitle,
         author,
+        persona,
         question: textToSend.trim(),
         history,
       });
