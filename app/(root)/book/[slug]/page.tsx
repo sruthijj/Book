@@ -66,6 +66,7 @@ export default async function BookDetailsPage({ params }: PageProps) {
                   fill
                   className="object-cover"
                   priority
+                  unoptimized={Boolean(book.coverURL && (book.coverURL.startsWith('data:') || book.coverURL.startsWith('blob:')))}
                 />
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-[#6B6B6B]">

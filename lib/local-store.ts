@@ -29,7 +29,10 @@ export interface StoredSegment {
   wordCount: number;
 }
 
-const DATA_DIR = path.join(process.cwd(), '.data');
+const DATA_DIR =
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+    ? path.join('/tmp', '.data')
+    : path.join(process.cwd(), '.data');
 const BOOKS_FILE = path.join(DATA_DIR, 'books.json');
 const SEGMENTS_FILE = path.join(DATA_DIR, 'segments.json');
 
