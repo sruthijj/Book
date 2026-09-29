@@ -24,18 +24,18 @@ export async function checkVoiceSessionLimit(): Promise<SessionCheckResult> {
     const user = await getCurrentUser();
     const plan = await getUserPlan();
 
-    // Default duration in minutes
-    const maxDurationMinutes = plan === 'enterprise' ? 60 : plan === 'pro' ? 30 : 10;
-    const sessionLimit = plan === 'enterprise' ? 9999 : plan === 'pro' ? 50 : 5;
+    // Unlimited sessions for all plans
+    const maxDurationMinutes = 60;
+    const sessionLimit = 99999;
 
-    // For unauthenticated guests, allow up to 3 trial sessions
+    // For unauthenticated guests, allow unlimited trial sessions
     if (!user) {
       return {
         allowed: true,
         currentCount: 0,
-        limit: 3,
+        limit: 99999,
         plan: 'free',
-        maxDurationMinutes: 10,
+        maxDurationMinutes: 60,
       };
     }
 
@@ -233,6 +233,123 @@ ${excerptsText ? `\nBook Context:\n${excerptsText}\n` : ''}`;
       voiceDescription: 'Young female, American, calm & clear',
       systemPrompt: `You are an AI reading companion for the book "${bookTitle}" by ${author}. Speak naturally, conversationally, and keep answers concise (1-2 sentences).`,
       firstMessage: `Hi! I'm ready to discuss "${bookTitle}". What would you like to talk about?`,
+    };
+  }
+}
+
+export interface VoiceCompanionParams {
+  bookId: string;
+  bookTitle: string;
+  author: string;
+  persona?: string;
+  spokenText: string;
+}
+
+/**
+ * 100% Free Gemini Voice Companion Action
+ * Takes the user's spoken words, queries Gemini 3.5 Flash Lite with book RAG context,
+ * and returns concise spoken dialogue formatted for Web Speech Synthesis.
+ */
+export async function askGeminiVoiceCompanion({
+  bookId,
+  bookTitle,
+  author,
+  persona,
+  spokenText,
+}: VoiceCompanionParams) {
+  try {
+    const voice = getVoice(persona);
+    const geminiKey = process.env.GEMINI_API_KEY;
+
+    if (!geminiKey) {
+      return {
+        success: false,
+        error: 'AI Voice Service is not configured.',
+      };
+    }
+
+    // Retrieve relevant passages from the book (RAG)
+    let excerptsText = '';
+    try {
+      const searchRes = await searchBookSegments(bookId, spokenText, 3);
+      if (searchRes.success && Array.isArray(searchRes.data) && searchRes.data.length > 0) {
+        excerptsText = searchRes.data
+          .map((s, i) => `[Excerpt ${i + 1}${s.pageNumber ? ` - Page ${s.pageNumber}` : ''}]: ${s.content.slice(0, 300)}`)
+          .join('\n\n');
+      }
+    } catch {
+      // ignore
+    }
+
+    const systemPrompt = `You are ${voice.name}, a warm and engaging conversational reading companion talking about "${bookTitle}" by ${author}.
+Personality: ${voice.description}.
+
+AUDIO CONVERSATION RULES:
+1. Speak directly in 1 to 3 short, natural sentences as if having a real phone call.
+2. Never use emojis, asterisks, bullet points, numbers, bold or markdown formatting.
+3. Ground your thoughts in "${bookTitle}". Answer thoughtfully and keep the conversation flowing.
+${excerptsText ? `\nRelevant Book Passages:\n${excerptsText}\n` : ''}`;
+
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: `${systemPrompt}\n\nThe reader says to you: "${spokenText}"` }],
+      },
+    ];
+
+    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+    let textReply = '';
+
+    for (const model of candidateModels) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents,
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 250,
+              },
+            }),
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (reply && reply.trim()) {
+            textReply = reply
+              .replace(/[*#_`]/g, '')
+              .replace(/\n+/g, ' ')
+              .trim();
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`Model ${model} failed, trying next fallback:`, err);
+      }
+    }
+
+    if (!textReply) {
+      return {
+        success: false,
+        error: 'Could not generate a response. Please try speaking again.',
+      };
+    }
+
+    return {
+      success: true,
+      answer: textReply,
+      voiceName: voice.name,
+    };
+  } catch (err: any) {
+    console.error('askGeminiVoiceCompanion error:', err);
+    return {
+      success: false,
+      error: err?.message || 'Voice generation encountered an error',
     };
   }
 }

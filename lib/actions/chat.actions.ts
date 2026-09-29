@@ -230,7 +230,7 @@ STRICT INSTRUCTIONS:
 
       return {
         success: true,
-        answer: `I searched the indexed segments for "${bookTitle}" and retrieved ${sources.length} matching passages related to your question:\n\n${excerptsSummary}\n\n💡 Tip: Add \`GEMINI_API_KEY\` or \`OPENAI_API_KEY\` to your \`.env.local\` file to enable full conversational AI synthesis!`,
+        answer: `I searched the indexed segments for "${bookTitle}" and retrieved ${sources.length} matching passages related to your question:\n\n${excerptsSummary}\n\n💡 Tip: Add your AI API key to your \`.env.local\` file to enable full conversational AI synthesis!`,
         sources,
       };
     }
@@ -238,7 +238,7 @@ STRICT INSTRUCTIONS:
     // Fallback for sample/unindexed books
     return {
       success: true,
-      answer: `I'm ready to discuss "${bookTitle}" by ${author}! To enable full AI answers grounded in this book, add your \`GEMINI_API_KEY\` (Google AI Studio) or \`OPENAI_API_KEY\` in \`.env.local\`. When you upload your own book PDF, all text segments will be stored in PostgreSQL and used as direct context here.`,
+      answer: `I'm ready to discuss "${bookTitle}" by ${author}! When you upload your own book PDF, all text segments will be stored in the database and used as direct context here.`,
       sources: undefined,
     };
   } catch (error: unknown) {

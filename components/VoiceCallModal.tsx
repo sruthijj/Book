@@ -13,12 +13,15 @@ import {
   AlertCircle,
   CheckCircle2,
   RotateCcw,
+  Send,
+  Bot,
 } from 'lucide-react';
 import Vapi from '@vapi-ai/web';
 import {
   startVoiceSession,
   endVoiceSession,
   getVoiceSessionConfig,
+  askGeminiVoiceCompanion,
 } from '@/lib/actions/voice.actions';
 import { VAPI_PUBLIC_KEY, ASSISTANT_ID } from '@/lib/constants';
 import { formatDuration } from '@/lib/utils';
@@ -33,6 +36,7 @@ interface VoiceCallModalProps {
 }
 
 type CallStatus = 'idle' | 'connecting' | 'connected' | 'ended';
+type VoiceEngine = 'gemini' | 'vapi';
 
 interface TranscriptItem {
   id: string;
@@ -48,38 +52,47 @@ export default function VoiceCallModal({
   author,
   persona,
 }: VoiceCallModalProps) {
+  const [engine, setEngine] = useState<VoiceEngine>('gemini');
   const [status, setStatus] = useState<CallStatus>('idle');
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const [volumeLevel, setVolumeLevel] = useState(0);
   const [callDuration, setCallDuration] = useState(0);
   const [transcripts, setTranscripts] = useState<TranscriptItem[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [isSimulated, setIsSimulated] = useState(false);
-  const [userMicLevel, setUserMicLevel] = useState(0);
+  const [manualText, setManualText] = useState('');
 
   // References
   const vapiRef = useRef<Vapi | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const isMutedRef = useRef(false);
+  const isCallActiveRef = useRef(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const durationRef = useRef(0);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  isMutedRef.current = isMuted;
 
   // Auto-scroll transcript
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcripts]);
+  }, [transcripts, isThinking]);
 
   // Handle call timer
   useEffect(() => {
     if (status === 'connected') {
       durationRef.current = 0;
       setCallDuration(0);
+      isCallActiveRef.current = true;
       timerRef.current = setInterval(() => {
         durationRef.current += 1;
         setCallDuration((prev) => prev + 1);
       }, 1000);
     } else {
+      isCallActiveRef.current = false;
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -94,105 +107,337 @@ export default function VoiceCallModal({
   // Clean up on unmount or close
   useEffect(() => {
     return () => {
-      if (vapiRef.current) {
-        try {
-          vapiRef.current.stop();
-        } catch {
-          // ignore cleanup errors
-        }
-      }
+      cleanupAudioSession();
     };
   }, []);
 
+  const cleanupAudioSession = () => {
+    if (vapiRef.current) {
+      try {
+        vapiRef.current.stop();
+      } catch {
+        // ignore
+      }
+      vapiRef.current = null;
+    }
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+        recognitionRef.current.abort();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
+    if (volumeIntervalRef.current) {
+      clearInterval(volumeIntervalRef.current);
+      volumeIntervalRef.current = null;
+    }
+  };
+
   if (!isOpen) return null;
 
-  // ─── Start Call ────────────────────────────────────────────────────────────
-  const handleStartCall = async (simulated: boolean = false) => {
+  // ─── Gemini Speech Synthesis Helper ─────────────────────────────────────────
+  const speakWithGemini = (text: string, onEndCallback?: () => void) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      onEndCallback?.();
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    // Pick a natural voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const isFemale = !['dave', 'daniel', 'chris'].includes(persona?.toLowerCase() || '');
+    const preferredVoices = voices.filter((v) => v.lang.startsWith('en'));
+
+    if (isFemale) {
+      const match = preferredVoices.find((v) =>
+        v.name.includes('Natural') ||
+        v.name.includes('Google US English') ||
+        v.name.includes('Jenny') ||
+        v.name.includes('Samantha') ||
+        v.name.includes('Zira') ||
+        v.name.toLowerCase().includes('female')
+      );
+      if (match) utterance.voice = match;
+    } else {
+      const match = preferredVoices.find((v) =>
+        v.name.includes('Guy') ||
+        v.name.includes('David') ||
+        v.name.includes('Daniel') ||
+        v.name.toLowerCase().includes('male')
+      );
+      if (match) utterance.voice = match;
+    }
+
+    // Dynamic wave animation while speaking
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      if (volumeIntervalRef.current) clearInterval(volumeIntervalRef.current);
+      volumeIntervalRef.current = setInterval(() => {
+        setVolumeLevel(Math.random() * 0.7 + 0.2);
+      }, 150);
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setVolumeLevel(0);
+      if (volumeIntervalRef.current) {
+        clearInterval(volumeIntervalRef.current);
+        volumeIntervalRef.current = null;
+      }
+      onEndCallback?.();
+    };
+
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setVolumeLevel(0);
+      if (volumeIntervalRef.current) {
+        clearInterval(volumeIntervalRef.current);
+        volumeIntervalRef.current = null;
+      }
+      onEndCallback?.();
+    };
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // ─── Gemini Voice Mode Start ────────────────────────────────────────────────
+  const startGeminiVoice = async () => {
+    cleanupAudioSession();
     setErrorMessage(null);
     setStatus('connecting');
     setTranscripts([]);
-    setIsSimulated(simulated);
 
     try {
-      // 1. Fetch voice configuration and system prompt
       const config = await getVoiceSessionConfig(bookId, bookTitle, author, persona);
-      
-      // 2. Start session in database
       const sessionResult = await startVoiceSession(bookId);
-      if (!sessionResult.success || !sessionResult.sessionId) {
-        setErrorMessage(sessionResult.error || 'Could not start voice session');
-        setStatus('idle');
-        return;
+
+      if (sessionResult.success && sessionResult.sessionId) {
+        setActiveSessionId(sessionResult.sessionId);
       }
 
-      setActiveSessionId(sessionResult.sessionId);
+      setStatus('connected');
+      const initialGreeting = config.firstMessage;
+
+      setTranscripts([
+        {
+          id: `greet-${Date.now()}`,
+          role: 'assistant',
+          text: initialGreeting,
+        },
+      ]);
+
+      // Speak greeting, then start speech recognition
+      speakWithGemini(initialGreeting, () => {
+        initSpeechRecognition();
+      });
+    } catch (err: any) {
+      console.error('Failed to start Voice Companion:', err);
+      setErrorMessage(err?.message || 'Could not connect to Voice Service');
+      setStatus('idle');
+    }
+  };
+
+  // ─── Initialize Browser Speech Recognition ──────────────────────────────────
+  const initSpeechRecognition = () => {
+    if (!isCallActiveRef.current) return;
+    if (typeof window === 'undefined') return;
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setErrorMessage(
+        'Your browser does not support Web Speech Recognition. You can still type in the input bar below!'
+      );
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false; // Capture per utterance
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        if (!isMutedRef.current) {
+          setVolumeLevel(0.2);
+        }
+      };
+
+      recognition.onresult = (event: any) => {
+        if (isMutedRef.current) return;
+
+        const current = event.resultIndex;
+        const transcript = event.results[current][0].transcript;
+        const isFinal = event.results[current].isFinal;
+
+        if (!isFinal) {
+          setVolumeLevel(0.6);
+        } else if (transcript.trim()) {
+          setVolumeLevel(0);
+          handleUserUtterance(transcript.trim());
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          // Restart listening silently if the call is still ongoing
+          if (isCallActiveRef.current && !isMutedRef.current && !isSpeaking) {
+            setTimeout(() => {
+              try {
+                recognition.start();
+              } catch {
+                // ignore restart
+              }
+            }, 500);
+          }
+        } else if (event.error === 'not-allowed') {
+          setErrorMessage('Microphone access was blocked. Please permit microphone access in your browser.');
+        }
+      };
+
+      recognition.onend = () => {
+        // Auto-restart listening if call is active and assistant is not talking
+        if (isCallActiveRef.current && !isMutedRef.current && !isSpeaking && !isThinking) {
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch {
+              // ignore
+            }
+          }, 300);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      console.warn('Speech recognition start issue:', e);
+    }
+  };
+
+  // ─── Process User Voice Utterance ───────────────────────────────────────────
+  const handleUserUtterance = async (spokenText: string) => {
+    if (!spokenText.trim()) return;
+
+    // Pause recognition while thinking & speaking
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+
+    // Add user message to transcript
+    setTranscripts((prev) => [
+      ...prev,
+      {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        text: spokenText,
+      },
+    ]);
+
+    setIsThinking(true);
+
+    try {
+      const res = await askGeminiVoiceCompanion({
+        bookId,
+        bookTitle,
+        author,
+        persona,
+        spokenText,
+      });
+
+      setIsThinking(false);
+
+      if (res.success && res.answer) {
+        const answer = res.answer;
+        setTranscripts((prev) => [
+          ...prev,
+          {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            text: answer,
+          },
+        ]);
+
+        // Speak response aloud, then restart listening
+        speakWithGemini(answer, () => {
+          if (isCallActiveRef.current && !isMutedRef.current) {
+            initSpeechRecognition();
+          }
+        });
+      } else {
+        const fallback = "I'm having trouble retrieving that from the book right now. Could you ask again?";
+        setTranscripts((prev) => [
+          ...prev,
+          {
+            id: `err-${Date.now()}`,
+            role: 'assistant',
+            text: fallback,
+          },
+        ]);
+        speakWithGemini(fallback, () => {
+          if (isCallActiveRef.current && !isMutedRef.current) {
+            initSpeechRecognition();
+          }
+        });
+      }
+    } catch (e) {
+      setIsThinking(false);
+      console.error('Error in handleUserUtterance:', e);
+      initSpeechRecognition();
+    }
+  };
+
+  // ─── Start Call (Dispatcher) ───────────────────────────────────────────────
+  const handleStartCall = async (simulated: boolean = false) => {
+    if (engine === 'gemini') {
+      await startGeminiVoice();
+      return;
+    }
+
+    // ── Vapi WebRTC Mode ────────────────────────────────────────────────────
+    cleanupAudioSession();
+    setErrorMessage(null);
+    setStatus('connecting');
+    setTranscripts([]);
+
+    try {
+      const config = await getVoiceSessionConfig(bookId, bookTitle, author, persona);
+      const sessionResult = await startVoiceSession(bookId);
+      if (sessionResult.success && sessionResult.sessionId) {
+        setActiveSessionId(sessionResult.sessionId);
+      }
 
       const publicKey = config.vapiPublicKey || VAPI_PUBLIC_KEY;
       const assistantId = config.assistantId || ASSISTANT_ID;
 
-      // If simulated mode (e.g. no key or user explicitly selected simulator)
-      if (simulated || !publicKey) {
-        if (!simulated && !publicKey) {
-          setErrorMessage('Vapi Public Key is not configured. Please add NEXT_PUBLIC_VAPI_PUBLIC_KEY in .env.local or test in Demo Simulator Mode.');
-          setStatus('idle');
-          return;
-        }
-
-        // Demo simulation mode
-        setTimeout(() => {
-          setStatus('connected');
-          setTranscripts([
-            {
-              id: 'init',
-              role: 'assistant',
-              text: config.firstMessage,
-            },
-          ]);
-
-          // Simulate speech wave
-          const interval = setInterval(() => {
-            setVolumeLevel(Math.random() * 0.6 + 0.2);
-          }, 300);
-
-          setTimeout(() => {
-            clearInterval(interval);
-            setVolumeLevel(0);
-          }, 4000);
-        }, 1200);
-        return;
-      }
-
-      // Clean up any lingering previous session
-      if (vapiRef.current) {
-        try {
-          vapiRef.current.stop();
-        } catch {
-          // ignore
-        }
-        vapiRef.current = null;
-      }
-
-      // 2.5 Pre-check microphone permission via permissions API without locking hardware
-      if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
-        try {
-          const micPerm = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-          if (micPerm.state === 'denied') {
-            setErrorMessage('Microphone access is blocked in your browser settings. Please click the lock or camera icon in your address bar to allow microphone access, then try again.');
-            setStatus('idle');
-            return;
-          }
-        } catch {
-          // Not supported on Safari / older browsers, ignore and let Vapi request directly
-        }
-      }
-
-      // 3. Connect to live Vapi instance
       const vapi = new Vapi(publicKey);
       vapiRef.current = vapi;
 
-      // Event Listeners
       vapi.on('call-start', () => {
         setStatus('connected');
+        try {
+          vapi.setMuted(false);
+          setIsMuted(false);
+        } catch {
+          // ignore
+        }
         setTranscripts([
           {
             id: `msg-${Date.now()}`,
@@ -218,10 +463,6 @@ export default function VoiceCallModal({
         setVolumeLevel(level);
       });
 
-      vapi.on('local-volume-level', (level: number) => {
-        setUserMicLevel(level);
-      });
-
       vapi.on('message', (message: any) => {
         if (message.type === 'transcript' && message.transcript) {
           const role: 'user' | 'assistant' = message.role === 'user' ? 'user' : 'assistant';
@@ -238,38 +479,22 @@ export default function VoiceCallModal({
         }
       });
 
-      vapi.on('call-start-failed', (err: any) => {
-        console.error('Vapi Call Start Failed:', err);
-        const msg =
-          err?.error?.message ||
-          err?.message ||
-          (typeof err?.error === 'string' ? err.error : null) ||
-          'Failed to start voice call. Please check your microphone permissions.';
-        setErrorMessage(msg);
-        setStatus('idle');
-      });
-
       vapi.on('error', (err: any) => {
         console.error('Vapi WebRTC Error:', err);
         const msg =
           err?.error?.message ||
           err?.message ||
           (typeof err?.error === 'string' ? err.error : null) ||
-          (err?.type ? `Voice error (${err.type})` : 'Voice connection encountered an error');
+          'Voice connection error';
         setErrorMessage(msg);
         setStatus('idle');
       });
 
-      // 4. Start call with Vapi
       if (assistantId) {
         await vapi.start(assistantId, {
-          variableValues: {
-            bookTitle,
-            author,
-          },
+          variableValues: { bookTitle, author },
         });
       } else {
-        // Start inline assistant configuration
         await vapi.start({
           name: `Reader Companion - ${bookTitle}`,
           firstMessage: config.firstMessage,
@@ -281,12 +506,7 @@ export default function VoiceCallModal({
           model: {
             provider: 'openai',
             model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: config.systemPrompt,
-              },
-            ],
+            messages: [{ role: 'system', content: config.systemPrompt }],
           },
           voice: {
             provider: '11labs',
@@ -295,22 +515,15 @@ export default function VoiceCallModal({
         });
       }
     } catch (err: any) {
-      console.error('Failed to initiate voice call:', err);
-      setErrorMessage(err?.message || 'Could not connect to voice service');
+      console.error('Failed to initiate Vapi call:', err);
+      setErrorMessage(err?.message || 'Could not connect to Vapi');
       setStatus('idle');
     }
   };
 
   // ─── End Call ──────────────────────────────────────────────────────────────
   const handleEndCall = async () => {
-    if (vapiRef.current) {
-      try {
-        vapiRef.current.stop();
-      } catch {
-        // ignore
-      }
-      vapiRef.current = null;
-    }
+    cleanupAudioSession();
 
     if (activeSessionId) {
       await endVoiceSession(activeSessionId, durationRef.current);
@@ -318,32 +531,42 @@ export default function VoiceCallModal({
 
     setStatus('ended');
     setIsSpeaking(false);
+    setIsThinking(false);
     setVolumeLevel(0);
   };
 
   // ─── Toggle Mute ───────────────────────────────────────────────────────────
   const handleToggleMute = () => {
-    if (vapiRef.current) {
-      const nextMuted = !isMuted;
-      vapiRef.current.setMuted(nextMuted);
-      setIsMuted(nextMuted);
-    } else {
-      setIsMuted(!isMuted);
+    const next = !isMuted;
+    setIsMuted(next);
+
+    if (engine === 'vapi' && vapiRef.current) {
+      vapiRef.current.setMuted(next);
+    } else if (engine === 'gemini') {
+      if (next && recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      } else if (!next && !isSpeaking && !isThinking) {
+        initSpeechRecognition();
+      }
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg bg-[#FAF7F0] border border-[#E9E1CC] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-lg bg-[#FAF7F0] border border-[#E9E1CC] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* Header */}
-        <div className="px-6 py-4 bg-white/70 border-b border-[#E9E1CC] flex items-center justify-between">
+        <div className="px-6 py-4 bg-white/80 border-b border-[#E9E1CC] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-[#663820] text-white flex items-center justify-center shadow-xs">
               <Radio className="w-5 h-5 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-serif font-bold text-base text-[#1C1C1C] truncate max-w-[260px]">
+              <h3 className="font-serif font-bold text-base text-[#1C1C1C] truncate max-w-[240px]">
                 {bookTitle}
               </h3>
               <p className="text-xs text-[#6B6B6B] flex items-center gap-1.5">
@@ -367,8 +590,40 @@ export default function VoiceCallModal({
           </button>
         </div>
 
+        {/* Engine Switcher (When Idle) */}
+        {status === 'idle' && (
+          <div className="px-6 pt-4 pb-1">
+            <div className="flex items-center bg-[#EDE6D4] p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setEngine('gemini')}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                  engine === 'gemini'
+                    ? 'bg-[#663820] text-white shadow-xs'
+                    : 'text-[#6B6B6B] hover:text-[#1C1C1C]'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>AI Voice (Free & Unlimited)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setEngine('vapi')}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                  engine === 'vapi'
+                    ? 'bg-[#663820] text-white shadow-xs'
+                    : 'text-[#6B6B6B] hover:text-[#1C1C1C]'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>WebRTC Mode</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Content Body */}
-        <div className="p-6 flex-1 flex flex-col items-center justify-center text-center">
+        <div className="p-6 flex-1 flex flex-col items-center justify-center text-center overflow-y-auto">
           
           {/* Error Banner */}
           {errorMessage && (
@@ -382,7 +637,7 @@ export default function VoiceCallModal({
 
           {/* ── STATE 1: IDLE ──────────────────────────────────────────────── */}
           {status === 'idle' && (
-            <div className="space-y-6 py-4 max-w-sm">
+            <div className="space-y-5 py-2 max-w-sm">
               <div className="relative mx-auto w-28 h-28 rounded-full bg-[#F5F0E1] border-2 border-[#E9E1CC] flex items-center justify-center shadow-inner group">
                 <div className="absolute inset-0 rounded-full bg-[#663820]/10 animate-ping opacity-25" />
                 <Mic className="w-12 h-12 text-[#663820] transition-transform group-hover:scale-110" />
@@ -390,31 +645,25 @@ export default function VoiceCallModal({
 
               <div>
                 <h4 className="font-serif font-bold text-xl text-[#1C1C1C] mb-1">
-                  Ready to Start Voice Conversation
+                  {engine === 'gemini' ? 'AI Voice Companion' : 'WebRTC Voice Mode'}
                 </h4>
                 <p className="text-xs text-[#6B6B6B] leading-relaxed">
-                  Have an interactive, two-way spoken conversation about ideas, questions, and themes from &ldquo;{bookTitle}&rdquo;.
+                  {engine === 'gemini'
+                    ? `Have an interactive, spoken conversation about "${bookTitle}". 100% free with unlimited sessions.`
+                    : `Connect via live WebRTC voice pipeline with text-to-speech.`}
                 </p>
               </div>
 
-              <div className="flex flex-col gap-2.5 pt-2">
+              <div className="pt-2">
                 <button
                   onClick={() => handleStartCall(false)}
                   className="w-full h-12 rounded-xl bg-[#663820] hover:bg-[#4d2814] text-white font-semibold text-sm shadow-sm transition-all flex items-center justify-center gap-2"
                 >
                   <Mic className="w-4 h-4" />
-                  <span>Connect Voice Call (Vapi)</span>
+                  <span>
+                    {engine === 'gemini' ? 'Start Voice Call' : 'Connect WebRTC Call'}
+                  </span>
                 </button>
-
-                {!VAPI_PUBLIC_KEY && (
-                  <button
-                    onClick={() => handleStartCall(true)}
-                    className="w-full h-10 rounded-xl bg-white border border-[#E9E1CC] hover:bg-[#F5F0E1] text-[#663820] font-medium text-xs transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Try Interactive Demo Simulation</span>
-                  </button>
-                )}
               </div>
             </div>
           )}
@@ -427,10 +676,10 @@ export default function VoiceCallModal({
               </div>
               <div>
                 <h4 className="font-serif font-bold text-lg text-[#1C1C1C]">
-                  Establishing Voice Audio Stream...
+                  {engine === 'gemini' ? 'Initializing Voice Companion...' : 'Connecting Audio...'}
                 </h4>
                 <p className="text-xs text-[#6B6B6B] mt-1">
-                  Connecting low-latency WebRTC with Vapi voice pipeline
+                  Loading book knowledge and preparing audio session
                 </p>
               </div>
             </div>
@@ -441,29 +690,29 @@ export default function VoiceCallModal({
             <div className="w-full flex-1 flex flex-col items-center justify-between">
               
               {/* Audio Visualizer Orb */}
-              <div className="py-6 flex flex-col items-center">
+              <div className="py-4 flex flex-col items-center">
                 <div className="relative flex items-center justify-center">
-                  {/* Dynamic Voice Halo based on volumeLevel */}
                   <div
                     className="absolute rounded-full bg-[#663820]/20 transition-all duration-150"
                     style={{
-                      width: `${120 + volumeLevel * 90}px`,
-                      height: `${120 + volumeLevel * 90}px`,
+                      width: `${110 + volumeLevel * 80}px`,
+                      height: `${110 + volumeLevel * 80}px`,
                     }}
                   />
                   <div
                     className="absolute rounded-full bg-[#663820]/30 transition-all duration-150"
                     style={{
-                      width: `${100 + volumeLevel * 50}px`,
-                      height: `${100 + volumeLevel * 50}px`,
+                      width: `${90 + volumeLevel * 40}px`,
+                      height: `${90 + volumeLevel * 40}px`,
                     }}
                   />
-                  {/* Center Circle */}
-                  <div className="relative w-24 h-24 rounded-full bg-[#663820] text-white flex items-center justify-center shadow-lg">
+                  <div className="relative w-22 h-22 rounded-full bg-[#663820] text-white flex items-center justify-center shadow-lg">
                     {isSpeaking ? (
-                      <Volume2 className="w-10 h-10 animate-pulse text-amber-300" />
+                      <Volume2 className="w-9 h-9 animate-pulse text-amber-300" />
+                    ) : isThinking ? (
+                      <Loader2 className="w-9 h-9 animate-spin text-amber-300" />
                     ) : (
-                      <Mic className="w-10 h-10 text-white" />
+                      <Mic className="w-9 h-9 text-white" />
                     )}
                   </div>
                 </div>
@@ -472,7 +721,11 @@ export default function VoiceCallModal({
                 <div className="mt-4 flex items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    {isSpeaking ? 'Assistant Speaking...' : 'Listening...'}
+                    {isSpeaking
+                      ? `${persona || 'Rachel'} Speaking...`
+                      : isThinking
+                      ? 'AI Thinking...'
+                      : 'Listening (Speak now)...'}
                   </span>
                   <span className="text-xs font-mono font-semibold text-[#6B6B6B] bg-white px-2.5 py-1 rounded-full border border-[#E9E1CC]">
                     {formatDuration(callDuration)}
@@ -480,40 +733,74 @@ export default function VoiceCallModal({
                 </div>
               </div>
 
-              {/* Real-time Live Transcript Area */}
-              <div className="w-full bg-white rounded-2xl border border-[#E9E1CC] p-4 h-48 overflow-y-auto text-left space-y-3 shadow-inner my-2">
-                <div className="text-[10px] uppercase font-bold tracking-wider text-[#A89F8F] mb-1">
-                  Live Spoken Transcript:
+              {/* Real-time Spoken Transcript Area */}
+              <div className="w-full bg-white rounded-2xl border border-[#E9E1CC] p-4 h-40 overflow-y-auto text-left space-y-2.5 shadow-inner my-2">
+                <div className="text-[10px] uppercase font-bold tracking-wider text-[#A89F8F] mb-1 flex items-center justify-between">
+                  <span>Live Dialogue:</span>
+                  <span className="text-[10px] font-normal text-[#663820]">
+                    {engine === 'gemini' ? 'AI Voice Companion' : 'WebRTC Mode'}
+                  </span>
                 </div>
-                {transcripts.length === 0 ? (
-                  <p className="text-xs text-[#A89F8F] italic">
-                    Start speaking to begin your conversation...
-                  </p>
-                ) : (
-                  transcripts.map((t, idx) => (
-                    <div
-                      key={t.id || idx}
-                      className={`text-xs leading-relaxed p-2.5 rounded-xl ${
-                        t.role === 'user'
-                          ? 'bg-[#663820] text-white ml-6 text-right'
-                          : 'bg-[#F5F0E1]/60 text-[#1C1C1C] mr-6'
-                      }`}
-                    >
-                      <span className="font-bold text-[10px] block opacity-75 mb-0.5">
-                        {t.role === 'user' ? 'You' : `${persona || 'Assistant'}`}
-                      </span>
-                      {t.text}
-                    </div>
-                  ))
+                {transcripts.map((t, idx) => (
+                  <div
+                    key={t.id || idx}
+                    className={`text-xs leading-relaxed p-2.5 rounded-xl ${
+                      t.role === 'user'
+                        ? 'bg-[#663820] text-white ml-6 text-right'
+                        : 'bg-[#F5F0E1]/80 text-[#1C1C1C] mr-6'
+                    }`}
+                  >
+                    <span className="font-bold text-[10px] block opacity-75 mb-0.5">
+                      {t.role === 'user' ? 'You' : `${persona || 'Assistant'}`}
+                    </span>
+                    {t.text}
+                  </div>
+                ))}
+                {isThinking && (
+                  <div className="text-xs text-[#6B6B6B] italic flex items-center gap-1.5 py-1">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Formulating response from book excerpts...</span>
+                  </div>
                 )}
                 <div ref={transcriptEndRef} />
               </div>
 
+              {/* Text Input Fallback (Allows typing if mic is quiet) */}
+              {engine === 'gemini' && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (manualText.trim()) {
+                      const text = manualText.trim();
+                      setManualText('');
+                      handleUserUtterance(text);
+                    }
+                  }}
+                  className="w-full flex items-center gap-2 mb-2"
+                >
+                  <input
+                    type="text"
+                    value={manualText}
+                    onChange={(e) => setManualText(e.target.value)}
+                    placeholder="Or type a question about this book..."
+                    className="flex-1 h-9 px-3.5 rounded-xl bg-white border border-[#E9E1CC] text-xs text-[#1C1C1C] placeholder:text-[#A89F8F] focus:outline-hidden focus:border-[#663820]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!manualText.trim() || isThinking || isSpeaking}
+                    className="h-9 px-3 rounded-xl bg-[#663820] text-white text-xs font-semibold disabled:opacity-50 flex items-center justify-center"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              )}
+
               {/* Call Control Buttons */}
-              <div className="pt-4 flex items-center justify-center gap-4">
+              <div className="pt-2 flex items-center justify-center gap-4">
                 <button
+                  type="button"
                   onClick={handleToggleMute}
-                  className={`w-12 h-12 rounded-full border flex items-center justify-center transition-all ${
+                  className={`w-11 h-11 rounded-full border flex items-center justify-center transition-all ${
                     isMuted
                       ? 'bg-amber-100 border-amber-300 text-amber-800'
                       : 'bg-white border-[#E9E1CC] text-[#1C1C1C] hover:bg-[#F5F0E1]'
@@ -524,8 +811,9 @@ export default function VoiceCallModal({
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleEndCall}
-                  className="h-12 px-6 rounded-full bg-red-600 hover:bg-red-700 text-white font-semibold text-xs flex items-center gap-2 shadow-md transition-all group"
+                  className="h-11 px-6 rounded-full bg-red-600 hover:bg-red-700 text-white font-semibold text-xs flex items-center gap-2 shadow-md transition-all group"
                 >
                   <PhoneOff className="w-4 h-4 transition-transform group-hover:scale-110" />
                   <span>End Conversation</span>
@@ -553,11 +841,11 @@ export default function VoiceCallModal({
 
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => handleStartCall(isSimulated)}
+                  onClick={() => handleStartCall(false)}
                   className="flex-1 h-11 rounded-xl bg-[#663820] hover:bg-[#4d2814] text-white font-semibold text-xs flex items-center justify-center gap-2 transition-all"
                 >
                   <RotateCcw className="w-4 h-4" />
-                  <span>Start Again</span>
+                  <span>Talk Again</span>
                 </button>
 
                 <button
