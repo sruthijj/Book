@@ -10,6 +10,13 @@ import { getCurrentUser } from "@/lib/auth";
 import { sampleBooks } from "@/lib/constants";
 import { getUserPlan } from "../subscription.server";
 import { PLAN_LIMITS } from "../subscription-constants";
+import {
+  getLocalBooks,
+  saveLocalBook,
+  getLocalBookBySlug,
+  saveLocalSegments,
+  searchLocalSegments,
+} from "@/lib/local-store";
 
 export const getAllBooks = async (search?: string) => {
     try {
@@ -32,15 +39,27 @@ export const getAllBooks = async (search?: string) => {
             ? await query.where(whereCondition)
             : await query;
 
+        const dbBooks = serializeData(result) || [];
+        const localBooks = getLocalBooks() || [];
+
+        // Combine DB books with any local offline books
+        const combined = [...dbBooks];
+        for (const lb of localBooks) {
+            if (!combined.some((b) => b.slug === lb.slug)) {
+                combined.unshift(lb);
+            }
+        }
+
         return {
             success: true,
-            data: serializeData(result),
+            data: combined,
         };
     } catch (e: any) {
-        console.error('Error fetching books from database', e);
+        console.warn('Database query failed in getAllBooks, using local storage:', e?.message);
+        const localBooks = getLocalBooks();
         return {
-            success: false,
-            error: e.message || 'Failed to fetch books',
+            success: true,
+            data: serializeData(localBooks),
         };
     }
 };
@@ -49,17 +68,28 @@ export const checkBookExists = async (title: string) => {
     try {
         const slug = generateSlug(title);
 
-        const existingBook = await db
-            .select()
-            .from(books)
-            .where(eq(books.slug, slug))
-            .limit(1);
+        try {
+            const existingBook = await db
+                .select()
+                .from(books)
+                .where(eq(books.slug, slug))
+                .limit(1);
 
-        if (existingBook.length > 0) {
-            return {
-                exists: true,
-                book: serializeData(existingBook[0]),
-            };
+            if (existingBook.length > 0) {
+                return {
+                    exists: true,
+                    book: serializeData(existingBook[0]),
+                };
+            }
+        } catch {
+            // Check local store if database is offline
+            const local = getLocalBookBySlug(slug);
+            if (local) {
+                return {
+                    exists: true,
+                    book: serializeData(local),
+                };
+            }
         }
 
         return {
@@ -75,9 +105,10 @@ export const checkBookExists = async (title: string) => {
 };
 
 export const createBook = async (data: CreateBook) => {
-    try {
-        const slug = generateSlug(data.title);
+    const slug = generateSlug(data.title);
 
+    try {
+        // Attempt PostgreSQL insertion first
         const existingBook = await db
             .select()
             .from(books)
@@ -102,7 +133,7 @@ export const createBook = async (data: CreateBook) => {
         const bookCount = Number(bookCountResult?.count || 0);
 
         if (bookCount >= limits.maxBooks) {
-            revalidatePath("/");
+        try { revalidatePath("/"); } catch { /* ignore outside request context */ }
 
             return {
                 success: false,
@@ -130,18 +161,22 @@ export const createBook = async (data: CreateBook) => {
             })
             .returning();
 
-        revalidatePath("/");
+        try { revalidatePath("/"); } catch { /* ignore outside request context */ }
 
         return {
             success: true,
             data: serializeData(newBook),
         };
     } catch (e: any) {
-        console.error('Error creating a book', e);
+        console.warn('PostgreSQL database unavailable, saving book to local storage fallback:', e.message);
+
+        // Fallback: save book into local file storage
+        const localBook = saveLocalBook(data, slug);
+        try { revalidatePath("/"); } catch { /* ignore outside request context */ }
 
         return {
-            success: false,
-            error: e.message || 'Failed to create book',
+            success: true,
+            data: serializeData(localBook),
         };
     }
 };
@@ -159,7 +194,18 @@ export const getBookBySlug = async (slug: string) => {
                 book = result[0];
             }
         } catch (dbErr) {
-            console.warn('Database query failed in getBookBySlug, checking sample books:', dbErr);
+            console.warn('Database query failed in getBookBySlug, checking local and sample books:', dbErr);
+        }
+
+        // If not in database, check local store
+        if (!book) {
+            const local = getLocalBookBySlug(slug);
+            if (local) {
+                return {
+                    success: true,
+                    data: serializeData(local),
+                };
+            }
         }
 
         if (!book) {
@@ -203,20 +249,20 @@ export const saveBookSegments = async (
     clerkIdOrSegments: string | TextSegment[],
     maybeSegments?: TextSegment[]
 ) => {
+    const segments: TextSegment[] = Array.isArray(clerkIdOrSegments)
+        ? clerkIdOrSegments
+        : (maybeSegments || []);
+
+    const userId: string = typeof clerkIdOrSegments === 'string'
+        ? clerkIdOrSegments
+        : 'guest';
+
+    if (segments.length === 0) {
+        return { success: true, data: { segmentsCreated: 0 } };
+    }
+
     try {
-        const segments: TextSegment[] = Array.isArray(clerkIdOrSegments)
-            ? clerkIdOrSegments
-            : (maybeSegments || []);
-
-        const userId: string = typeof clerkIdOrSegments === 'string'
-            ? clerkIdOrSegments
-            : 'guest';
-
-        console.log('Saving book segments...');
-
-        if (segments.length === 0) {
-            return { success: true, data: { segmentsCreated: 0 } };
-        }
+        console.log('Saving book segments to PostgreSQL...');
 
         const segmentsToInsert = segments.map(({ text, segmentIndex, pageNumber, wordCount }) => ({
             bookId,
@@ -238,18 +284,21 @@ export const saveBookSegments = async (
             .set({ totalSegments: segments.length })
             .where(eq(books.id, bookId));
 
-        console.log('Book segments saved successfully.');
+        console.log('Book segments saved to PostgreSQL successfully.');
 
         return {
             success: true,
             data: { segmentsCreated: segments.length },
         };
     } catch (e: any) {
-        console.error('Error saving book segments', e);
+        console.warn('PostgreSQL unavailable, saving segments to local store fallback:', e.message);
+
+        // Save segments to local store so AI RAG search can still query them
+        saveLocalSegments(bookId, segments);
 
         return {
-            success: false,
-            error: e.message || 'Failed to save book segments',
+            success: true,
+            data: { segmentsCreated: segments.length },
         };
     }
 };
@@ -257,15 +306,6 @@ export const saveBookSegments = async (
 export const searchBookSegments = async (bookId: string, query: string, limit: number = 5) => {
     try {
         console.log(`Searching for: "${query}" in book ${bookId}`);
-
-        // If bookId is not a valid UUID (e.g. sample books with IDs '1', '2'), return empty list
-        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bookId);
-        if (!isUUID) {
-            return {
-                success: true,
-                data: [],
-            };
-        }
 
         // Try PostgreSQL full-text search with plainto_tsquery
         try {
@@ -295,39 +335,57 @@ export const searchBookSegments = async (bookId: string, query: string, limit: n
             // Fall through to keyword ILIKE search if FTS query encounters syntax anomaly
         }
 
-        // Fallback: ILIKE search with keyword matching
-        const keywords = query.split(/\s+/).filter((k) => k.length > 2);
-        const whereConditions = keywords.map((k) => ilike(bookSegments.content, `%${k}%`));
+        // Fallback: ILIKE search with keyword matching in DB
+        try {
+            const keywords = query.split(/\s+/).filter((k) => k.length > 2);
+            const whereConditions = keywords.map((k) => ilike(bookSegments.content, `%${k}%`));
 
-        const fallbackResults = await db
-            .select({
-                id: bookSegments.id,
-                bookId: bookSegments.bookId,
-                content: bookSegments.content,
-                segmentIndex: bookSegments.segmentIndex,
-                pageNumber: bookSegments.pageNumber,
-                wordCount: bookSegments.wordCount,
-            })
-            .from(bookSegments)
-            .where(
-                whereConditions.length > 0
-                    ? sql`${bookSegments.bookId} = ${bookId} AND (${or(...whereConditions)})`
-                    : eq(bookSegments.bookId, bookId)
-            )
-            .orderBy(bookSegments.segmentIndex)
-            .limit(limit);
+            const fallbackResults = await db
+                .select({
+                    id: bookSegments.id,
+                    bookId: bookSegments.bookId,
+                    content: bookSegments.content,
+                    segmentIndex: bookSegments.segmentIndex,
+                    pageNumber: bookSegments.pageNumber,
+                    wordCount: bookSegments.wordCount,
+                })
+                .from(bookSegments)
+                .where(
+                    whereConditions.length > 0
+                        ? sql`${bookSegments.bookId} = ${bookId} AND (${or(...whereConditions)})`
+                        : eq(bookSegments.bookId, bookId)
+                )
+                .orderBy(bookSegments.segmentIndex)
+                .limit(limit);
 
-        console.log(`Search complete. Found ${fallbackResults.length} results`);
+            if (fallbackResults.length > 0) {
+                return {
+                    success: true,
+                    data: serializeData(fallbackResults),
+                };
+            }
+        } catch {
+            // DB failed, fall through to local store search
+        }
+
+        // Fallback: search local storage segments
+        const localResults = searchLocalSegments(bookId, query, limit);
+        if (localResults.length > 0) {
+            console.log(`Local search complete. Found ${localResults.length} results`);
+            return {
+                success: true,
+                data: serializeData(localResults),
+            };
+        }
 
         return {
             success: true,
-            data: serializeData(fallbackResults),
+            data: [],
         };
     } catch (error) {
         console.error('Error searching segments:', error);
         return {
-            success: false,
-            error: (error as Error).message,
+            success: true,
             data: [],
         };
     }

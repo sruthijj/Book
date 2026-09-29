@@ -77,19 +77,19 @@ export async function askBookAssistant({
       ? `Persona: You embody "${voice.name}" (${voice.description}). Adopt this speaking style, tone, and mannerisms naturally throughout the discussion.`
       : '';
 
-    const systemPrompt = `You are an insightful and engaging AI reading companion for the book "${bookTitle}" by ${author}.
-Your goal is to help the reader understand, analyze, and discuss the ideas, chapters, and concepts in this book.
+    const systemPrompt = `You are a precise, direct AI assistant answering questions about the book "${bookTitle}" by ${author}.
 ${personaInstruction ? `\n${personaInstruction}\n` : ''}
 Book Excerpts Retrieved from Database:
 """
 ${contextText}
 """
 
-Guidelines:
-1. Ground your answers primarily in the book excerpts provided above whenever available.
-2. If the excerpts don't contain the full answer, draw upon your general literary knowledge of "${bookTitle}" by ${author} to provide a thoughtful, helpful response.
-3. Be conversational, encouraging, and clear.
-4. Keep answers concise (2-3 paragraphs maximum) so it feels like a natural conversation.`;
+STRICT INSTRUCTIONS:
+1. Answer ONLY what the user explicitly asks. Do not provide unprompted summaries, unrelated commentary, or unsolicited suggestions.
+2. Go straight to the answer without any introductory pleasantries or filler (never say "Certainly!", "Sure thing!", or "As an AI companion...").
+3. Ground your response in the provided book excerpts whenever available.
+4. Keep the answer strictly focused, accurate, and concise.
+5. If the book does not contain the answer, state that directly in one clear sentence.`;
 
     // 3. Check for AI Providers
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -133,7 +133,7 @@ Guidelines:
               },
               contents,
               generationConfig: {
-                temperature: 0.7,
+                temperature: 0.2,
                 maxOutputTokens: 800,
               },
             }),
@@ -153,7 +153,7 @@ Guidelines:
                 },
                 contents,
                 generationConfig: {
-                  temperature: 0.7,
+                  temperature: 0.2,
                   maxOutputTokens: 800,
                 },
               }),
@@ -198,7 +198,7 @@ Guidelines:
           body: JSON.stringify({
             model: 'gpt-4o-mini',
             messages,
-            temperature: 0.7,
+            temperature: 0.2,
             max_tokens: 600,
           }),
         });

@@ -1,16 +1,18 @@
 "use client";
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Upload, FileText, Image as ImageIcon, X, Mic2 } from 'lucide-react';
+import { FileText, Image as ImageIcon, X, Mic2, AlertCircle } from 'lucide-react';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { voiceOptions, voiceCategories } from "@/lib/constants";
 import LoadingOverlay from "@/components/LoadingOverlay";
-import { cn } from "@/lib/utils";
+import { cn, parsePDFFile, generateSlug } from "@/lib/utils";
+import { createBook, saveBookSegments } from "@/lib/actions/book.actions";
 
 // ─── Validation Schema ───────────────────────────────────────────────────────
 
@@ -70,9 +72,21 @@ const FileDropzone = ({ id, accept, fileName, icon, label, hint, onChange, onRem
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
+const fileToDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+};
+
 const BookUploadForm = () => {
+    const router = useRouter();
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [pdfName,   setPdfName]   = useState<string | null>(null);
+    const [loadingMessage, setLoadingMessage] = useState("Synthesizing your interactive book...");
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    const [pdfName, setPdfName] = useState<string | null>(null);
     const [coverName, setCoverName] = useState<string | null>(null);
 
     const form = useForm<FormValues>({
@@ -94,24 +108,73 @@ const BookUploadForm = () => {
         if (!file) return;
 
         form.setValue(field, file);
-        field === "pdfFile" ? setPdfName(file.name) : setCoverName(file.name);
+        if (field === "pdfFile") {
+            setPdfName(file.name);
+            // Autofill title if empty
+            if (!form.getValues("title")) {
+                const autoTitle = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+                form.setValue("title", autoTitle);
+            }
+        } else {
+            setCoverName(file.name);
+        }
     };
 
     const removeFile = (field: "pdfFile" | "coverImage") => {
         form.setValue(field, undefined);
-        field === "pdfFile" ? setPdfName(null) : setCoverName(null);
+        if (field === "pdfFile") {
+            setPdfName(null);
+        } else {
+            setCoverName(null);
+        }
     };
 
     const onSubmit = async (values: FormValues) => {
         try {
             setIsSubmitting(true);
-            console.log("Submitting:", values);
+            setUploadError(null);
+            setLoadingMessage("Parsing PDF text and generating cover...");
 
-            // TODO: Replace with real API call
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+            // 1. Extract text and cover preview from PDF
+            const parsed = await parsePDFFile(values.pdfFile);
 
-        } catch (error) {
+            let coverURL = parsed.cover;
+            if (values.coverImage && values.coverImage instanceof File) {
+                coverURL = await fileToDataURL(values.coverImage);
+            }
+
+            setLoadingMessage("Saving book details to library...");
+
+            // 2. Create Book in PostgreSQL
+            const createRes = await createBook({
+                title: values.title.trim(),
+                slug: generateSlug(values.title),
+                author: values.authorName.trim(),
+                persona: values.voice,
+                fileURL: `local://${values.pdfFile.name}`,
+                fileBlobKey: values.pdfFile.name,
+                coverURL: coverURL,
+                coverBlobKey: `cover-${values.title.trim()}`,
+                fileSize: values.pdfFile.size,
+            });
+
+            if (!createRes.success || !createRes.data) {
+                throw new Error(createRes.error || "Failed to create book");
+            }
+
+            const book = createRes.data;
+
+            // 3. Save text chunks to bookSegments table for RAG search
+            if (parsed.content && parsed.content.length > 0) {
+                setLoadingMessage(`Indexing ${parsed.content.length} text segments for AI search...`);
+                await saveBookSegments(book.id, parsed.content);
+            }
+
+            // 4. Redirect to the newly created interactive book page
+            router.push(`/book/${book.slug}`);
+        } catch (error: any) {
             console.error("Submission failed:", error);
+            setUploadError(error?.message || "Failed to upload and process book PDF");
         } finally {
             setIsSubmitting(false);
         }
@@ -122,15 +185,22 @@ const BookUploadForm = () => {
     return (
         <div className="new-book-wrapper">
 
-            {isSubmitting && <LoadingOverlay message="Synthesizing your interactive book..." />}
+            {isSubmitting && <LoadingOverlay message={loadingMessage} />}
 
             {/* Page Header */}
             <div className="mb-12">
                 <h1 className="text-3xl font-serif font-bold text-[#1C1C1C] mb-2">
                     Upload a PDF to generate your interactive interview
                 </h1>
-                <p className="text-[#6B6B6B] font-medium">5 of 10 books used (Upgrade)</p>
+                <p className="text-[#6B6B6B] font-medium">Upload any PDF book to index its knowledge base</p>
             </div>
+
+            {uploadError && (
+                <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-sm text-red-700">
+                    <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                    <span>{uploadError}</span>
+                </div>
+            )}
 
             <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-10">

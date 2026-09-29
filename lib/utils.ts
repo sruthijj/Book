@@ -108,9 +108,11 @@ export async function parsePDFFile(file: File) {
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdfDocument = await loadingTask.promise;
 
-    // Render first page as cover image
+    // Render first page as lightweight cover thumbnail
     const firstPage = await pdfDocument.getPage(1);
-    const viewport = firstPage.getViewport({ scale: 2 }); // 2x scale for better quality
+    const unscaledViewport = firstPage.getViewport({ scale: 1 });
+    const targetScale = Math.min(300 / unscaledViewport.width, 1);
+    const viewport = firstPage.getViewport({ scale: targetScale });
 
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
@@ -127,8 +129,8 @@ export async function parsePDFFile(file: File) {
       canvas: canvas,
     } as any)).promise;
 
-    // Convert canvas to data URL
-    const coverDataURL = canvas.toDataURL('image/png');
+    // Convert canvas to lightweight compressed JPEG data URL
+    const coverDataURL = canvas.toDataURL('image/jpeg', 0.75);
 
     // Extract text from all pages
     let fullText = '';
