@@ -7,6 +7,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getUserPlan } from "@/lib/subscription.server";
 import { searchBookSegments } from "./book.actions";
 import { getVoice } from "@/lib/utils";
+import { VAPI_PUBLIC_KEY, ASSISTANT_ID } from "@/lib/constants";
 import {
   StartSessionResult,
   EndSessionResult,
@@ -213,6 +214,8 @@ ${excerptsText ? `\nBook Context:\n${excerptsText}\n` : ''}`;
 
     return {
       success: true,
+      vapiPublicKey: process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || process.env.VAPI_PUBLIC_KEY || VAPI_PUBLIC_KEY,
+      assistantId: process.env.NEXT_PUBLIC_ASSISTANT_ID || process.env.ASSISTANT_ID || ASSISTANT_ID,
       voiceId: voice.id,
       voiceName: voice.name,
       voiceDescription: voice.description,
@@ -223,6 +226,8 @@ ${excerptsText ? `\nBook Context:\n${excerptsText}\n` : ''}`;
     console.error('Error getting voice session config:', error);
     return {
       success: false,
+      vapiPublicKey: process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || process.env.VAPI_PUBLIC_KEY || VAPI_PUBLIC_KEY,
+      assistantId: process.env.NEXT_PUBLIC_ASSISTANT_ID || process.env.ASSISTANT_ID || ASSISTANT_ID,
       voiceId: '21m00Tcm4TlvDq8ikWAM',
       voiceName: 'Rachel',
       voiceDescription: 'Young female, American, calm & clear',

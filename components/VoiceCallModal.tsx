@@ -126,10 +126,13 @@ export default function VoiceCallModal({
 
       setActiveSessionId(sessionResult.sessionId);
 
+      const publicKey = config.vapiPublicKey || VAPI_PUBLIC_KEY;
+      const assistantId = config.assistantId || ASSISTANT_ID;
+
       // If simulated mode (e.g. no key or user explicitly selected simulator)
-      if (simulated || !VAPI_PUBLIC_KEY) {
-        if (!simulated && !VAPI_PUBLIC_KEY) {
-          setErrorMessage('Vapi Public Key is not configured in .env.local. You can test in Demo Simulator Mode below.');
+      if (simulated || !publicKey) {
+        if (!simulated && !publicKey) {
+          setErrorMessage('Vapi Public Key is not configured. Please add NEXT_PUBLIC_VAPI_PUBLIC_KEY in .env.local or test in Demo Simulator Mode.');
           setStatus('idle');
           return;
         }
@@ -159,7 +162,7 @@ export default function VoiceCallModal({
       }
 
       // 3. Connect to live Vapi instance
-      const vapi = new Vapi(VAPI_PUBLIC_KEY);
+      const vapi = new Vapi(publicKey);
       vapiRef.current = vapi;
 
       // Event Listeners
@@ -213,8 +216,8 @@ export default function VoiceCallModal({
       });
 
       // 4. Start call with Vapi
-      if (ASSISTANT_ID) {
-        await vapi.start(ASSISTANT_ID, {
+      if (assistantId) {
+        await vapi.start(assistantId, {
           variableValues: {
             bookTitle,
             author,
